@@ -83,6 +83,14 @@ function formatKRW(value?: number | null) {
   return `${Math.round(value).toLocaleString("ko-KR")}원`;
 }
 
+function formatApiError(error: any) {
+  const message = error?.message || "요청 실패";
+  if (message.includes("Unauthorized")) {
+    return "관리 비밀번호가 틀렸거나 입력되지 않았습니다. Cloudflare/Netlify 환경변수 APP_PASSWORD와 같은 값을 입력하세요.";
+  }
+  return message;
+}
+
 function buildPresetOptions(): Array<[string, string]> {
   return [
     ["CUSTOM", "직접 입력"],
@@ -128,15 +136,15 @@ function App() {
   const [message, setMessage] = useState("");
   const [monthlyScanInfo, setMonthlyScanInfo] = useState<string | null>(null);
 
-  const canUse = useMemo(() => password.trim().length > 0, [password]);
+  const hasPassword = useMemo(() => password.trim().length > 0, [password]);
   const selectedPreset = useMemo(() => DESTINATION_PRESETS.find((preset) => preset.code === routePreset), [routePreset]);
 
   useEffect(() => {
-    if (!password) return;
+    if (!hasPassword) return;
     localStorage.setItem("flight-alert-password", password);
     loadAlerts().catch(() => undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [password]);
+  }, [hasPassword, password]);
 
   function applyPreset(code: string) {
     setRoutePreset(code);
@@ -171,7 +179,10 @@ function App() {
   }
 
   async function loadAlerts() {
-    if (!canUse) return;
+    if (!hasPassword) {
+      setMessage("저장된 알림을 보려면 관리 비밀번호를 입력하세요.");
+      return;
+    }
     const data = await api<{ alerts: FlightAlert[] }>("alerts", { method: "GET" }, password);
     setAlerts(data.alerts || []);
   }
@@ -192,13 +203,17 @@ function App() {
       }
       setMessage(data.offers?.length ? "가격 조회 완료" : "조회 결과가 없습니다. 날짜/공항 코드를 바꿔보세요.");
     } catch (error: any) {
-      setMessage(error.message || "검색 실패");
+      setMessage(formatApiError(error));
     } finally {
       setLoading(false);
     }
   }
 
   async function createAlert() {
+    if (!hasPassword) {
+      setMessage("알림 저장은 관리 비밀번호를 입력한 뒤 가능합니다.");
+      return;
+    }
     setLoading(true);
     setMessage("");
     try {
@@ -206,13 +221,17 @@ function App() {
       setMessage("알림 저장 완료. 스케줄러가 알림별 설정 주기에 맞춰 가격을 확인합니다.");
       await loadAlerts();
     } catch (error: any) {
-      setMessage(error.message || "알림 저장 실패");
+      setMessage(formatApiError(error));
     } finally {
       setLoading(false);
     }
   }
 
   async function deleteAlert(id: string) {
+    if (!hasPassword) {
+      setMessage("알림 삭제는 관리 비밀번호를 입력한 뒤 가능합니다.");
+      return;
+    }
     setLoading(true);
     setMessage("");
     try {
@@ -220,7 +239,7 @@ function App() {
       setMessage("알림 삭제 완료");
       await loadAlerts();
     } catch (error: any) {
-      setMessage(error.message || "삭제 실패");
+      setMessage(formatApiError(error));
     } finally {
       setLoading(false);
     }
@@ -241,7 +260,7 @@ function App() {
         <div>
           <label>관리 비밀번호</label>
           <input type="password" placeholder="APP_PASSWORD" value={password} onChange={(e) => setPassword(e.target.value)} />
-          <p className="hint">Cloudflare/Netlify 환경변수 APP_PASSWORD와 같은 값입니다. 사이트 관리용 잠금 비밀번호입니다.</p>
+          <p className="hint">검색 버튼은 비밀번호 없이도 누를 수 있습니다. 배포 환경에 APP_PASSWORD가 설정돼 있으면 같은 값을 입력해야 API가 통과합니다.</p>
         </div>
         <div className="routeBox">
           <b>현재 검색 경로</b>
@@ -301,8 +320,8 @@ function App() {
         )}
         <p className="hint">직접 입력하려면 출발/도착 공항에 IATA 3자리 코드를 넣으면 됩니다. 예: ICN → MXP, ICN → HNL, ICN → JFK.</p>
         <div className="actions">
-          <button disabled={!canUse || loading} onClick={searchFlights}>지금 가격 조회</button>
-          <button className="secondary" disabled={!canUse || loading} onClick={createAlert}><Bell size={16} /> 목표가 알림 저장</button>
+          <button disabled={loading} onClick={searchFlights}>지금 가격 조회</button>
+          <button className="secondary" disabled={!hasPassword || loading} onClick={createAlert}><Bell size={16} /> 목표가 알림 저장</button>
         </div>
         {message && <p className="message">{message}</p>}
       </section>
@@ -335,7 +354,7 @@ function App() {
       </section>
 
       <section className="card">
-        <div className="sectionTitle spread"><h2>저장된 알림</h2><button className="tiny" disabled={!canUse || loading} onClick={loadAlerts}>새로고침</button></div>
+        <div className="sectionTitle spread"><h2>저장된 알림</h2><button className="tiny" disabled={!hasPassword || loading} onClick={loadAlerts}>새로고침</button></div>
         <div className="alertList">
           {alerts.map((alert) => {
             const mode = alert.search_mode === "month_range" ? `월별 ${alert.departure_months?.join(", ")} · ${alert.trip_length_days || 7}박` : `${alert.departure_date}${alert.return_date ? ` ~ ${alert.return_date}` : ""}`;
@@ -347,7 +366,7 @@ function App() {
                   <p className="muted">목표가 {formatKRW(alert.target_price_krw)} / 마지막 조회가 {formatKRW(alert.last_price_krw)}</p>
                   <p className="muted">감시 주기 {alert.check_interval_minutes || 30}분 / 중복 알림 제한 {alert.notify_cooldown_minutes || 360}분</p>
                 </div>
-                <button className="iconButton" onClick={() => deleteAlert(alert.id)} aria-label="delete alert"><Trash2 size={18} /></button>
+                <button className="iconButton" disabled={!hasPassword || loading} onClick={() => deleteAlert(alert.id)} aria-label="delete alert"><Trash2 size={18} /></button>
               </article>
             );
           })}
