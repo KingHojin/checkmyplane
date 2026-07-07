@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Bell, Plane, Search, Trash2 } from "lucide-react";
+import { Bell, Globe2, Plane, Search, Trash2 } from "lucide-react";
 import "./styles.css";
 
 type SearchMode = "exact" | "month_range";
@@ -47,6 +47,32 @@ type Offer = {
   }>;
 };
 
+type DestinationPreset = {
+  code: string;
+  city: string;
+  label: string;
+  note: string;
+  targetPriceKrw: string;
+};
+
+const DESTINATION_PRESETS: DestinationPreset[] = [
+  { code: "NCE", city: "니스/모나코", label: "인천-니스/모나코 왕복", note: "모나코 관문", targetPriceKrw: "1200000" },
+  { code: "MXP", city: "밀라노", label: "인천-밀라노 왕복", note: "북이탈리아", targetPriceKrw: "1100000" },
+  { code: "CDG", city: "파리", label: "인천-파리 왕복", note: "프랑스", targetPriceKrw: "1100000" },
+  { code: "FCO", city: "로마", label: "인천-로마 왕복", note: "이탈리아", targetPriceKrw: "1150000" },
+  { code: "BCN", city: "바르셀로나", label: "인천-바르셀로나 왕복", note: "스페인", targetPriceKrw: "1150000" },
+  { code: "LHR", city: "런던", label: "인천-런던 왕복", note: "영국", targetPriceKrw: "1200000" },
+  { code: "HNL", city: "하와이", label: "인천-호놀룰루 왕복", note: "휴양", targetPriceKrw: "900000" },
+  { code: "JFK", city: "뉴욕", label: "인천-뉴욕 왕복", note: "미국 동부", targetPriceKrw: "1300000" },
+  { code: "LAX", city: "로스앤젤레스", label: "인천-LA 왕복", note: "미국 서부", targetPriceKrw: "1000000" },
+  { code: "NRT", city: "도쿄", label: "인천-도쿄 왕복", note: "일본", targetPriceKrw: "250000" },
+  { code: "KIX", city: "오사카", label: "인천-오사카 왕복", note: "일본", targetPriceKrw: "220000" },
+  { code: "DAD", city: "다낭", label: "인천-다낭 왕복", note: "베트남", targetPriceKrw: "350000" },
+  { code: "BKK", city: "방콕", label: "인천-방콕 왕복", note: "태국", targetPriceKrw: "400000" },
+  { code: "SIN", city: "싱가포르", label: "인천-싱가포르 왕복", note: "동남아 허브", targetPriceKrw: "450000" },
+  { code: "SYD", city: "시드니", label: "인천-시드니 왕복", note: "호주", targetPriceKrw: "950000" },
+];
+
 const today = new Date();
 const defaultDepart = new Date(today.getTime() + 1000 * 60 * 60 * 24 * 60).toISOString().slice(0, 10);
 const defaultReturn = new Date(today.getTime() + 1000 * 60 * 60 * 24 * 67).toISOString().slice(0, 10);
@@ -55,6 +81,13 @@ const defaultMonth = defaultDepart.slice(0, 7);
 function formatKRW(value?: number | null) {
   if (value == null || Number.isNaN(value)) return "-";
   return `${Math.round(value).toLocaleString("ko-KR")}원`;
+}
+
+function buildPresetOptions(): Array<[string, string]> {
+  return [
+    ["CUSTOM", "직접 입력"],
+    ...DESTINATION_PRESETS.map((preset): [string, string] => [preset.code, `${preset.city} (${preset.code}) · ${preset.note}`]),
+  ];
 }
 
 async function api<T>(path: string, options: RequestInit = {}, password: string): Promise<T> {
@@ -73,8 +106,9 @@ async function api<T>(path: string, options: RequestInit = {}, password: string)
 
 function App() {
   const [password, setPassword] = useState(() => localStorage.getItem("flight-alert-password") || "");
+  const [routePreset, setRoutePreset] = useState("CUSTOM");
   const [form, setForm] = useState({
-    label: "인천-니스/모나코 왕복",
+    label: "인천-전세계 항공권 가격 알림",
     origin: "ICN",
     destination: "NCE",
     searchMode: "exact" as SearchMode,
@@ -95,6 +129,7 @@ function App() {
   const [monthlyScanInfo, setMonthlyScanInfo] = useState<string | null>(null);
 
   const canUse = useMemo(() => password.trim().length > 0, [password]);
+  const selectedPreset = useMemo(() => DESTINATION_PRESETS.find((preset) => preset.code === routePreset), [routePreset]);
 
   useEffect(() => {
     if (!password) return;
@@ -102,6 +137,19 @@ function App() {
     loadAlerts().catch(() => undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [password]);
+
+  function applyPreset(code: string) {
+    setRoutePreset(code);
+    const preset = DESTINATION_PRESETS.find((item) => item.code === code);
+    if (!preset) return;
+    setForm((current) => ({
+      ...current,
+      origin: current.origin || "ICN",
+      destination: preset.code,
+      label: preset.label,
+      targetPriceKrw: preset.targetPriceKrw,
+    }));
+  }
 
   function buildPayload() {
     return {
@@ -155,7 +203,7 @@ function App() {
     setMessage("");
     try {
       await api("alerts", { method: "POST", body: JSON.stringify(buildPayload()) }, password);
-      setMessage("알림 저장 완료. 5분마다 스케줄러가 돌고, 알림별 설정 주기에 맞춰 가격을 확인합니다.");
+      setMessage("알림 저장 완료. 스케줄러가 알림별 설정 주기에 맞춰 가격을 확인합니다.");
       await loadAlerts();
     } catch (error: any) {
       setMessage(error.message || "알림 저장 실패");
@@ -182,22 +230,40 @@ function App() {
     <main className="page">
       <section className="hero">
         <div>
-          <p className="eyebrow">Flight Price Watcher</p>
-          <h1>인천 → 모나코 항공권 가격 알림</h1>
-          <p className="sub">모나코는 상업 공항이 없어 보통 니스(NCE)로 들어간 뒤 기차/버스/택시로 이동합니다.</p>
+          <p className="eyebrow">CheckMyPlane</p>
+          <h1>전세계 항공권 가격 검색 & 목표가 알림</h1>
+          <p className="sub">모나코뿐 아니라 밀라노, 하와이, 일본, 동남아, 미국, 유럽 등 원하는 IATA 공항 코드로 항공권을 검색하고 목표가 이하 알림을 저장합니다.</p>
         </div>
-        <Plane className="heroIcon" size={64} />
+        <Globe2 className="heroIcon" size={64} />
       </section>
 
       <section className="card gridTwo">
         <div>
           <label>관리 비밀번호</label>
           <input type="password" placeholder="APP_PASSWORD" value={password} onChange={(e) => setPassword(e.target.value)} />
-          <p className="hint">Netlify 환경변수 APP_PASSWORD와 같아야 합니다.</p>
+          <p className="hint">Cloudflare/Netlify 환경변수 APP_PASSWORD와 같은 값입니다. 사이트 관리용 잠금 비밀번호입니다.</p>
         </div>
         <div className="routeBox">
-          <b>기본 추천 경로</b>
-          <span>ICN 인천 → NCE 니스 → Monaco</span>
+          <b>현재 검색 경로</b>
+          <span>{form.origin || "ICN"} → {form.destination || "도착 공항"}{selectedPreset ? ` · ${selectedPreset.city}` : ""}</span>
+          <small>공항 코드는 ICN, NCE, MXP, HNL처럼 3자리 IATA 코드를 사용합니다.</small>
+        </div>
+      </section>
+
+      <section className="card">
+        <div className="sectionTitle"><Plane /><h2>빠른 목적지</h2></div>
+        <div className="presetGrid">
+          {DESTINATION_PRESETS.map((preset) => (
+            <button
+              key={preset.code}
+              className={routePreset === preset.code ? "presetButton active" : "presetButton"}
+              type="button"
+              onClick={() => applyPreset(preset.code)}
+            >
+              <b>{preset.city}</b>
+              <span>{preset.code} · 목표 {Number(preset.targetPriceKrw).toLocaleString("ko-KR")}원</span>
+            </button>
+          ))}
         </div>
       </section>
 
@@ -209,9 +275,10 @@ function App() {
         </div>
 
         <div className="formGrid">
+          <SelectField label="빠른 목적지 선택" value={routePreset} onChange={applyPreset} options={buildPresetOptions()} />
           <Field label="알림 이름" value={form.label} onChange={(v) => setForm({ ...form, label: v })} />
-          <Field label="출발 공항" value={form.origin} onChange={(v) => setForm({ ...form, origin: v.toUpperCase() })} />
-          <Field label="도착 공항" value={form.destination} onChange={(v) => setForm({ ...form, destination: v.toUpperCase() })} />
+          <Field label="출발 공항" value={form.origin} onChange={(v) => { setRoutePreset("CUSTOM"); setForm({ ...form, origin: v.toUpperCase() }); }} />
+          <Field label="도착 공항" value={form.destination} onChange={(v) => { setRoutePreset("CUSTOM"); setForm({ ...form, destination: v.toUpperCase() }); }} />
           {form.searchMode === "exact" ? (
             <>
               <Field label="출발일" type="date" value={form.departureDate} onChange={(v) => setForm({ ...form, departureDate: v })} />
@@ -232,6 +299,7 @@ function App() {
         {form.searchMode === "month_range" && (
           <p className="hint">월별 검색은 예: <b>2026-09, 2026-10, 2026-11</b> 처럼 입력합니다. API 과금 방지를 위해 기본 최대 40개 출발일을 균등 스캔합니다.</p>
         )}
+        <p className="hint">직접 입력하려면 출발/도착 공항에 IATA 3자리 코드를 넣으면 됩니다. 예: ICN → MXP, ICN → HNL, ICN → JFK.</p>
         <div className="actions">
           <button disabled={!canUse || loading} onClick={searchFlights}>지금 가격 조회</button>
           <button className="secondary" disabled={!canUse || loading} onClick={createAlert}><Bell size={16} /> 목표가 알림 저장</button>
