@@ -1,0 +1,301 @@
+import React, { useEffect, useMemo, useState } from "react";
+import { createRoot } from "react-dom/client";
+import { Bell, Plane, Search, Trash2 } from "lucide-react";
+import "./styles.css";
+
+type SearchMode = "exact" | "month_range";
+
+type FlightAlert = {
+  id: string;
+  label: string | null;
+  origin: string;
+  destination: string;
+  departure_date: string;
+  return_date: string | null;
+  search_mode?: SearchMode;
+  departure_months?: string[] | null;
+  trip_length_days?: number | null;
+  adults: number;
+  currency: string;
+  target_price_krw: number;
+  email: string;
+  is_active: boolean;
+  last_price_krw: number | null;
+  last_checked_at: string | null;
+  last_notified_at: string | null;
+  check_interval_minutes: number;
+  notify_cooldown_minutes: number;
+  created_at: string;
+};
+
+type Offer = {
+  price: number;
+  currency: string;
+  carrier: string;
+  departureDate: string;
+  returnDate: string | null;
+  itineraries: Array<{
+    duration: string;
+    segments: Array<{
+      departure: string;
+      arrival: string;
+      departureAt: string;
+      arrivalAt: string;
+      carrierCode: string;
+      number: string;
+    }>;
+  }>;
+};
+
+const today = new Date();
+const defaultDepart = new Date(today.getTime() + 1000 * 60 * 60 * 24 * 60).toISOString().slice(0, 10);
+const defaultReturn = new Date(today.getTime() + 1000 * 60 * 60 * 24 * 67).toISOString().slice(0, 10);
+const defaultMonth = defaultDepart.slice(0, 7);
+
+function formatKRW(value?: number | null) {
+  if (value == null || Number.isNaN(value)) return "-";
+  return `${Math.round(value).toLocaleString("ko-KR")}원`;
+}
+
+async function api<T>(path: string, options: RequestInit = {}, password: string): Promise<T> {
+  const res = await fetch(`/.netlify/functions/${path}`, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      "x-app-password": password,
+      ...(options.headers || {}),
+    },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `API failed: ${res.status}`);
+  return data as T;
+}
+
+function App() {
+  const [password, setPassword] = useState(() => localStorage.getItem("flight-alert-password") || "");
+  const [form, setForm] = useState({
+    label: "인천-니스/모나코 왕복",
+    origin: "ICN",
+    destination: "NCE",
+    searchMode: "exact" as SearchMode,
+    departureDate: defaultDepart,
+    returnDate: defaultReturn,
+    departureMonths: defaultMonth,
+    tripLengthDays: "7",
+    adults: "1",
+    targetPriceKrw: "1200000",
+    checkIntervalMinutes: "30",
+    notifyCooldownMinutes: "360",
+    email: "",
+  });
+  const [offers, setOffers] = useState<Offer[]>([]);
+  const [alerts, setAlerts] = useState<FlightAlert[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState("");
+  const [monthlyScanInfo, setMonthlyScanInfo] = useState<string | null>(null);
+
+  const canUse = useMemo(() => password.trim().length > 0, [password]);
+
+  useEffect(() => {
+    if (!password) return;
+    localStorage.setItem("flight-alert-password", password);
+    loadAlerts().catch(() => undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [password]);
+
+  function buildPayload() {
+    return {
+      label: form.label,
+      origin: form.origin,
+      destination: form.destination,
+      searchMode: form.searchMode,
+      departureDate: form.departureDate,
+      returnDate: form.returnDate || null,
+      departureMonths: form.departureMonths,
+      tripLengthDays: Number(form.tripLengthDays),
+      adults: Number(form.adults),
+      targetPriceKrw: Number(form.targetPriceKrw),
+      checkIntervalMinutes: Number(form.checkIntervalMinutes),
+      notifyCooldownMinutes: Number(form.notifyCooldownMinutes),
+      email: form.email,
+      currency: "KRW",
+    };
+  }
+
+  async function loadAlerts() {
+    if (!canUse) return;
+    const data = await api<{ alerts: FlightAlert[] }>("alerts", { method: "GET" }, password);
+    setAlerts(data.alerts || []);
+  }
+
+  async function searchFlights() {
+    setLoading(true);
+    setMessage("");
+    setMonthlyScanInfo(null);
+    try {
+      const data = await api<{ offers: Offer[]; scannedDates?: number; months?: string[]; tripLengthDays?: number; searchMode?: SearchMode }>(
+        "search-flights",
+        { method: "POST", body: JSON.stringify(buildPayload()) },
+        password,
+      );
+      setOffers(data.offers || []);
+      if (data.searchMode === "month_range") {
+        setMonthlyScanInfo(`${data.months?.join(", ")} / ${data.tripLengthDays}박 일정 / ${data.scannedDates}개 출발일 스캔`);
+      }
+      setMessage(data.offers?.length ? "가격 조회 완료" : "조회 결과가 없습니다. 날짜/공항 코드를 바꿔보세요.");
+    } catch (error: any) {
+      setMessage(error.message || "검색 실패");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function createAlert() {
+    setLoading(true);
+    setMessage("");
+    try {
+      await api("alerts", { method: "POST", body: JSON.stringify(buildPayload()) }, password);
+      setMessage("알림 저장 완료. 5분마다 스케줄러가 돌고, 알림별 설정 주기에 맞춰 가격을 확인합니다.");
+      await loadAlerts();
+    } catch (error: any) {
+      setMessage(error.message || "알림 저장 실패");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function deleteAlert(id: string) {
+    setLoading(true);
+    setMessage("");
+    try {
+      await api(`alerts?id=${encodeURIComponent(id)}`, { method: "DELETE" }, password);
+      setMessage("알림 삭제 완료");
+      await loadAlerts();
+    } catch (error: any) {
+      setMessage(error.message || "삭제 실패");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <main className="page">
+      <section className="hero">
+        <div>
+          <p className="eyebrow">Flight Price Watcher</p>
+          <h1>인천 → 모나코 항공권 가격 알림</h1>
+          <p className="sub">모나코는 상업 공항이 없어 보통 니스(NCE)로 들어간 뒤 기차/버스/택시로 이동합니다.</p>
+        </div>
+        <Plane className="heroIcon" size={64} />
+      </section>
+
+      <section className="card gridTwo">
+        <div>
+          <label>관리 비밀번호</label>
+          <input type="password" placeholder="APP_PASSWORD" value={password} onChange={(e) => setPassword(e.target.value)} />
+          <p className="hint">Netlify 환경변수 APP_PASSWORD와 같아야 합니다.</p>
+        </div>
+        <div className="routeBox">
+          <b>기본 추천 경로</b>
+          <span>ICN 인천 → NCE 니스 → Monaco</span>
+        </div>
+      </section>
+
+      <section className="card">
+        <div className="sectionTitle"><Search /><h2>검색 / 알림 조건</h2></div>
+        <div className="modeTabs">
+          <button className={form.searchMode === "exact" ? "tab active" : "tab"} onClick={() => setForm({ ...form, searchMode: "exact" })}>일별 검색</button>
+          <button className={form.searchMode === "month_range" ? "tab active" : "tab"} onClick={() => setForm({ ...form, searchMode: "month_range" })}>여러 월별 검색</button>
+        </div>
+
+        <div className="formGrid">
+          <Field label="알림 이름" value={form.label} onChange={(v) => setForm({ ...form, label: v })} />
+          <Field label="출발 공항" value={form.origin} onChange={(v) => setForm({ ...form, origin: v.toUpperCase() })} />
+          <Field label="도착 공항" value={form.destination} onChange={(v) => setForm({ ...form, destination: v.toUpperCase() })} />
+          {form.searchMode === "exact" ? (
+            <>
+              <Field label="출발일" type="date" value={form.departureDate} onChange={(v) => setForm({ ...form, departureDate: v })} />
+              <Field label="귀국일" type="date" value={form.returnDate} onChange={(v) => setForm({ ...form, returnDate: v })} />
+            </>
+          ) : (
+            <>
+              <Field label="출발 월들" type="text" value={form.departureMonths} onChange={(v) => setForm({ ...form, departureMonths: v })} />
+              <Field label="여행 기간(박)" type="number" value={form.tripLengthDays} onChange={(v) => setForm({ ...form, tripLengthDays: v })} />
+            </>
+          )}
+          <Field label="인원" type="number" value={form.adults} onChange={(v) => setForm({ ...form, adults: v })} />
+          <Field label="목표가(KRW)" type="number" value={form.targetPriceKrw} onChange={(v) => setForm({ ...form, targetPriceKrw: v })} />
+          <SelectField label="감시 주기" value={form.checkIntervalMinutes} onChange={(v) => setForm({ ...form, checkIntervalMinutes: v })} options={[["5", "5분 - 공격형"], ["10", "10분 - 임박 여행"], ["30", "30분 - 추천"], ["60", "1시간"], ["180", "3시간"], ["360", "6시간"]]} />
+          <SelectField label="중복 알림 제한" value={form.notifyCooldownMinutes} onChange={(v) => setForm({ ...form, notifyCooldownMinutes: v })} options={[["0", "매번 알림"], ["60", "1시간에 1번"], ["360", "6시간에 1번 - 추천"], ["1440", "하루 1번"]]} />
+          <Field label="알림 이메일" type="email" value={form.email} onChange={(v) => setForm({ ...form, email: v })} />
+        </div>
+        {form.searchMode === "month_range" && (
+          <p className="hint">월별 검색은 예: <b>2026-09, 2026-10, 2026-11</b> 처럼 입력합니다. API 과금 방지를 위해 기본 최대 40개 출발일을 균등 스캔합니다.</p>
+        )}
+        <div className="actions">
+          <button disabled={!canUse || loading} onClick={searchFlights}>지금 가격 조회</button>
+          <button className="secondary" disabled={!canUse || loading} onClick={createAlert}><Bell size={16} /> 목표가 알림 저장</button>
+        </div>
+        {message && <p className="message">{message}</p>}
+      </section>
+
+      <section className="card">
+        <h2>현재 조회 결과</h2>
+        {monthlyScanInfo && <p className="hint">월별 검색: {monthlyScanInfo}</p>}
+        <div className="offerList">
+          {offers.map((offer, idx) => (
+            <article className="offer" key={`${offer.departureDate}-${offer.price}-${idx}`}>
+              <div>
+                <p className="price">{formatKRW(offer.price)}</p>
+                <p className="muted">{offer.departureDate}{offer.returnDate ? ` ~ ${offer.returnDate}` : ""}</p>
+                <p className="muted">항공사 코드: {offer.carrier || "-"}</p>
+              </div>
+              <div className="segments">
+                {offer.itineraries.map((it, i) => (
+                  <div key={i}>
+                    <b>{i === 0 ? "가는 편" : "오는 편"}</b>
+                    {it.segments.map((seg, j) => (
+                      <p key={j}>{seg.departure} → {seg.arrival} · {seg.departureAt} · {seg.carrierCode}{seg.number}</p>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </article>
+          ))}
+          {!offers.length && <p className="muted">아직 조회 결과가 없습니다.</p>}
+        </div>
+      </section>
+
+      <section className="card">
+        <div className="sectionTitle spread"><h2>저장된 알림</h2><button className="tiny" disabled={!canUse || loading} onClick={loadAlerts}>새로고침</button></div>
+        <div className="alertList">
+          {alerts.map((alert) => {
+            const mode = alert.search_mode === "month_range" ? `월별 ${alert.departure_months?.join(", ")} · ${alert.trip_length_days || 7}박` : `${alert.departure_date}${alert.return_date ? ` ~ ${alert.return_date}` : ""}`;
+            return (
+              <article className="alert" key={alert.id}>
+                <div>
+                  <b>{alert.label || "가격 알림"}</b>
+                  <p>{alert.origin} → {alert.destination} · {mode}</p>
+                  <p className="muted">목표가 {formatKRW(alert.target_price_krw)} / 마지막 조회가 {formatKRW(alert.last_price_krw)}</p>
+                  <p className="muted">감시 주기 {alert.check_interval_minutes || 30}분 / 중복 알림 제한 {alert.notify_cooldown_minutes || 360}분</p>
+                </div>
+                <button className="iconButton" onClick={() => deleteAlert(alert.id)} aria-label="delete alert"><Trash2 size={18} /></button>
+              </article>
+            );
+          })}
+          {!alerts.length && <p className="muted">저장된 알림이 없습니다.</p>}
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function SelectField({ label, value, onChange, options }: { label: string; value: string; onChange: (value: string) => void; options: Array<[string, string]>; }) {
+  return <div><label>{label}</label><select value={value} onChange={(e) => onChange(e.target.value)}>{options.map(([optionValue, text]) => <option key={optionValue} value={optionValue}>{text}</option>)}</select></div>;
+}
+
+function Field(props: { label: string; value: string; onChange: (value: string) => void; type?: string; }) {
+  return <div><label>{props.label}</label><input type={props.type || "text"} value={props.value} onChange={(e) => props.onChange(e.target.value)} /></div>;
+}
+
+createRoot(document.getElementById("root")!).render(<App />);
