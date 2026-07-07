@@ -6,8 +6,9 @@
   "scripts": {
     "dev": "netlify dev",
     "build": "vite build",
-    "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "preview": "pnpm run build && wrangler dev",
+    "typecheck": "tsc --noEmit",
+    "deploy": "pnpm run build && wrangler deploy"
   },
   "dependencies": {
     "@netlify/functions": "^4.2.5",
@@ -21,7 +22,9 @@
     "vite": "^7.0.4"
   },
   "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.43.0",
     "@types/react": "^19.2.17",
-    "@types/react-dom": "^19.2.3"
+    "@types/react-dom": "^19.2.3",
+    "wrangler": "^4.107.0"
   }
 }
