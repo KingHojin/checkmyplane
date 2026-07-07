@@ -16,6 +16,12 @@
 - 알림별 감시 주기: 5분 / 10분 / 30분 / 1시간 / 3시간 / 6시간
 - 중복 알림 제한: 매번 / 1시간 / 6시간 / 하루
 - Supabase에 가격 체크 기록 저장
+- 알림 일시정지/재개 (`PATCH /alerts`): 목표가, 감시 주기, 중복 알림 제한, 이메일, 라벨도 함께 수정 가능
+- 가격 이력 조회 API (`GET /price-history`): 알림별 과거 가격 확인 기록 확인
+- 수동 즉시 확인 API (`POST /check-alert`): 스케줄 대기 없이 지금 바로 가격을 확인 (중복 알림 제한은 그대로 적용)
+- 자동 만료: 지정한 출발일(또는 월별 검색의 마지막 달)이 이미 지나면 알림을 자동으로 비활성화
+- 연속 오류 자동 정지: 같은 알림이 연속 10회 조회에 실패하면 자동으로 일시정지하고 안내 이메일 발송
+- 가격 이력 보존 기간 관리: 오래된 가격 체크 기록은 주기적으로 자동 정리
 
 ## APP_PASSWORD란?
 
@@ -76,11 +82,16 @@ RESEND_FROM=Flight Alert <onboarding@resend.dev>
 
 APP_PASSWORD=원하는관리자비밀번호
 MONTHLY_SEARCH_MAX_DATES=40
+MAX_ALERTS_PER_RUN=10
+PRICE_CHECK_RETENTION_DAYS=30
 ```
+
+- `MAX_ALERTS_PER_RUN`: 스케줄러 한 번 실행에서 처리할 최대 알림 개수 (가장 오래 전에 확인한 알림부터 우선 처리)
+- `PRICE_CHECK_RETENTION_DAYS`: 가격 체크 이력(`price_checks`)을 보존할 일수. 이보다 오래된 기록은 스케줄러 실행마다 자동 삭제됩니다.
 
 ## Supabase
 
-`supabase/schema.sql`을 SQL editor에서 실행하세요. 기존 설치본도 같은 SQL을 다시 실행하면 월별 검색 컬럼이 추가됩니다.
+`supabase/schema.sql`을 SQL editor에서 실행하세요. 이 파일은 항상 다시 실행해도 안전합니다(`create table if not exists`, `add column if not exists`). 기존 설치본을 업그레이드할 때도 같은 파일을 그대로 다시 실행하면 새로 추가된 컬럼(월별 검색, 연속 오류 카운트, 마지막 오류, 비활성 사유 등)이 반영됩니다.
 
 ## 빌드
 

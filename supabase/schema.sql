@@ -20,6 +20,9 @@ create table if not exists public.flight_alerts (
   last_notified_at timestamptz,
   check_interval_minutes integer not null default 30 check (check_interval_minutes in (5, 10, 30, 60, 180, 360)),
   notify_cooldown_minutes integer not null default 360 check (notify_cooldown_minutes >= 0),
+  consecutive_error_count integer not null default 0,
+  last_error text,
+  deactivated_reason text,
   created_at timestamptz not null default now()
 );
 
@@ -48,5 +51,8 @@ alter table public.flight_alerts add column if not exists notify_cooldown_minute
 alter table public.flight_alerts add column if not exists search_mode text not null default 'exact';
 alter table public.flight_alerts add column if not exists departure_months text[];
 alter table public.flight_alerts add column if not exists trip_length_days integer;
+alter table public.flight_alerts add column if not exists consecutive_error_count integer not null default 0;
+alter table public.flight_alerts add column if not exists last_error text;
+alter table public.flight_alerts add column if not exists deactivated_reason text;
 
 create index if not exists flight_alerts_active_checked_idx on public.flight_alerts(is_active, last_checked_at);

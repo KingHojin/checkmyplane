@@ -77,6 +77,71 @@ export default async (req: Request) => {
       return jsonResponse({ alert: data }, 201);
     }
 
+    if (req.method === "PATCH") {
+      const body = await req.json();
+      const id = String(body.id || "").trim();
+      if (!id) throw new Error("Missing id");
+
+      const allowedKeys = new Set([
+        "id",
+        "is_active",
+        "isActive",
+        "target_price_krw",
+        "targetPriceKrw",
+        "check_interval_minutes",
+        "checkIntervalMinutes",
+        "notify_cooldown_minutes",
+        "notifyCooldownMinutes",
+        "email",
+        "label",
+      ]);
+      for (const key of Object.keys(body)) {
+        if (!allowedKeys.has(key)) throw new Error(`Unknown field: ${key}`);
+      }
+
+      const update: Record<string, unknown> = {};
+
+      if (body.is_active !== undefined || body.isActive !== undefined) {
+        const isActive = Boolean(body.is_active ?? body.isActive);
+        update.is_active = isActive;
+        // 다시 활성화할 때는 이전 오류 이력을 초기화해서 자동 정지 카운트가 이어지지 않게 합니다.
+        if (isActive) {
+          update.consecutive_error_count = 0;
+          update.deactivated_reason = null;
+        }
+      }
+
+      if (body.target_price_krw !== undefined || body.targetPriceKrw !== undefined) {
+        const targetPrice = Number(body.target_price_krw ?? body.targetPriceKrw);
+        if (!Number.isFinite(targetPrice) || targetPrice <= 0) throw new Error("Invalid target price");
+        update.target_price_krw = Math.round(targetPrice);
+      }
+
+      if (body.check_interval_minutes !== undefined || body.checkIntervalMinutes !== undefined) {
+        update.check_interval_minutes = normalizeInterval(body.check_interval_minutes ?? body.checkIntervalMinutes);
+      }
+
+      if (body.notify_cooldown_minutes !== undefined || body.notifyCooldownMinutes !== undefined) {
+        update.notify_cooldown_minutes = normalizeCooldown(body.notify_cooldown_minutes ?? body.notifyCooldownMinutes);
+      }
+
+      if (body.email !== undefined) {
+        const email = String(body.email || "").trim();
+        if (!email.includes("@")) throw new Error("Invalid email");
+        update.email = email;
+      }
+
+      if (body.label !== undefined) {
+        update.label = String(body.label || "").trim();
+      }
+
+      if (!Object.keys(update).length) throw new Error("No valid fields to update");
+
+      const { data, error } = await supabase.from("flight_alerts").update(update).eq("id", id).select("*").single();
+      if (error) throw error;
+      return jsonResponse({ alert: data });
+    }
+
     if (req.method === "DELETE") {
       const id = new URL(req.url).searchParams.get("id");
       if (!id) throw new Error("Missing id");
